@@ -33,38 +33,20 @@ public class FrontServlet extends HttpServlet {
         
         String resourcePath = requestURI.substring(contextPath.length());
         
-        // Vérifier si c'est une ressource (fichier avec extension)
-        if (isResourceRequest(resourcePath)) {
-            // C'est une ressource, laisser le serveur la gérer (affichage ou 404 standard)
-            try {
+        try {
+            java.net.URL resource = getServletContext().getResource(resourcePath);
+            if (resource != null) {
                 RequestDispatcher defaultServlet = getServletContext().getNamedDispatcher("default");
                 if (defaultServlet != null) {
                     defaultServlet.forward(request, response);
                     return;
                 }
-            } catch (Exception e) {
-                throw new ServletException("Erreur lors du traitement de la ressource: " + resourcePath, e);
             }
+        } catch (Exception e) {
+            throw new ServletException("Erreur lors de la vérification de la ressource: " + resourcePath, e);
         }
         
-        // Ce n'est pas une ressource, c'est une URL - afficher notre page personnalisée
         showFrameworkPage(request, response, resourcePath);
-    }
-    
-    /**
-     * Détermine si la requête concerne une ressource (fichier avec extension)
-     */
-    private boolean isResourceRequest(String path) {
-        if (path == null || path.equals("/") || path.isEmpty()) {
-            return false;
-        }
-        
-        // Vérifier si le chemin contient une extension de fichier
-        int lastSlash = path.lastIndexOf('/');
-        int lastDot = path.lastIndexOf('.');
-        
-        // Si il y a un point après le dernier slash, c'est probablement un fichier
-        return lastDot > lastSlash && lastDot > 0;
     }
     
     private void showFrameworkPage(HttpServletRequest request, HttpServletResponse response, 
