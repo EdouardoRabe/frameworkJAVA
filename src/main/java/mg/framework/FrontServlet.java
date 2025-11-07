@@ -7,7 +7,6 @@ import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import mg.framework.model.ModelView;
 
 
 @WebServlet(name = "FrontServlet", urlPatterns = {"/"}, loadOnStartup = 1)
@@ -62,25 +61,7 @@ public class FrontServlet extends HttpServlet {
             java.util.List<mg.framework.registry.HandlerMethod> handlers = registry.findExact(resourcePath);
             if (handlers != null && !handlers.isEmpty()) {
                 for (mg.framework.registry.HandlerMethod h : handlers) {
-                    try {
-                        Object controllerInstance = h.getControllerClass().getDeclaredConstructor().newInstance();
-                        Object result = h.getMethod().invoke(controllerInstance);
-                        if (result instanceof String) {
-                            response.getWriter().println((String) result);
-                        } else if (result instanceof ModelView) {
-                            ModelView mv = (ModelView) result;
-                            RequestDispatcher dispatcher = getServletContext().getRequestDispatcher("/" + mv.getView());
-                            if (dispatcher != null) {
-                                dispatcher.forward(request, response);
-                            } else {
-                                response.getWriter().println("View not found: " + mv.getView());
-                            }
-                        } else {
-                            response.getWriter().println("Unsupported return type: " + result.getClass().getName());
-                        }
-                    } catch (Exception e) {
-                        response.getWriter().println("Error invoking method: " + e.getMessage());
-                    }
+                    response.getWriter().println(h.getControllerClass().getName() + "#" + h.getMethod().getName());
                 }
                 return;
             }

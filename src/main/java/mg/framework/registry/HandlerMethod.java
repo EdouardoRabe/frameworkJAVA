@@ -6,13 +6,11 @@ public final class HandlerMethod {
     private final Class<?> controllerClass;
     private final Method method;
     private final String path;
-    private final Class<?> returnType;
 
     public HandlerMethod(Class<?> controllerClass, Method method, String path) {
         this.controllerClass = controllerClass;
         this.method = method;
         this.path = path;
-        this.returnType = method.getReturnType();
     }
 
     public Class<?> getControllerClass() {
@@ -25,9 +23,5 @@ public final class HandlerMethod {
 
     public String getPath() {
         return path;
-    }
-
-    public Class<?> getReturnType() {
-        return returnType;
     }
 }
