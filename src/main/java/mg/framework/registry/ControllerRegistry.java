@@ -63,14 +63,7 @@ public class ControllerRegistry {
         return snap;
     }
 
-    public Map<String, List<HandlerMethod>> getPatternRoutesSnapshot() {
-        Map<String, List<HandlerMethod>> snap = new HashMap<>();
-        for (Map.Entry<String, List<HandlerMethod>> e : patternRoutes.entrySet()) {
-            List<HandlerMethod> v = e.getValue();
-            synchronized (v) {
-                snap.put(e.getKey(), new ArrayList<>(v));
-            }
-        }
-        return snap;
+    public Pattern getCompiledPattern(String pattern) {
+        return compiledPatterns.get(pattern);
     }
 }
