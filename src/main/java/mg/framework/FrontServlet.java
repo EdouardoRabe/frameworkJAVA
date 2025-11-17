@@ -45,21 +45,9 @@ public class FrontServlet extends HttpServlet {
         String contextPath = request.getContextPath();       
         String resourcePath = requestURI.substring(contextPath.length());
 
-        try {
-            java.net.URL resource = getServletContext().getResource(resourcePath);
-            if (resource != null) {
-                RequestDispatcher defaultServlet = getServletContext().getNamedDispatcher("default");
-                if (defaultServlet != null) {
-                    defaultServlet.forward(request, response);
-                    return;
-                }
-            }
-        } catch (Exception e) {
-            throw new ServletException("Erreur lors de la vérification de la ressource: " + resourcePath, e);
-        }
-
+        // First, check if there's a handler for this path (including "/")
         if (registry != null) {
-            java.util.List<mg.framework.registry.HandlerMethod> handlers = registry.findExact(resourcePath);
+            java.util.List<mg.framework.registry.HandlerMethod> handlers = registry.findMatching(resourcePath);
             if (handlers != null && !handlers.isEmpty()) {
                 for (mg.framework.registry.HandlerMethod h : handlers) {
                     try {
@@ -87,6 +75,26 @@ public class FrontServlet extends HttpServlet {
                 }
                 return;
             }
+        }
+
+        try {
+            java.net.URL resource = getServletContext().getResource(resourcePath);
+            if (resource != null) {
+                if (resourcePath.endsWith(".jsp")) {
+                    RequestDispatcher jspDispatcher = getServletContext().getRequestDispatcher(resourcePath);
+                    if (jspDispatcher != null) {
+                        jspDispatcher.forward(request, response);
+                        return;
+                    }
+                }
+                RequestDispatcher defaultServlet = getServletContext().getNamedDispatcher("default");
+                if (defaultServlet != null) {
+                    defaultServlet.forward(request, response);
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            throw new ServletException("Erreur lors de la vérification de la ressource: " + resourcePath, e);
         }
 
         response.getWriter().println("Ressource non trouvée: " + resourcePath);
