@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
+import mg.framework.annotations.RequestParam;
 import mg.framework.model.ModelView;
 
 
@@ -71,6 +72,29 @@ public class FrontServlet extends HttpServlet {
                                         if (varIndex != -1) {
                                             String value = matcher.group(varIndex + 1);
                                             args[i] = convertValue(value, params[i].getType());
+                                        } else {
+                                            RequestParam requestParam = params[i].getAnnotation(RequestParam.class);
+                                            if (requestParam != null) {
+                                                String reqParamName = requestParam.value().isEmpty() ? paramName : requestParam.value();
+                                                int pathVarIndex = vars.indexOf(reqParamName);
+                                                if (pathVarIndex != -1) {
+                                                    String value = matcher.group(pathVarIndex + 1);
+                                                    args[i] = convertValue(value, params[i].getType());
+                                                } else {
+                                                    String value = request.getParameter(reqParamName);
+                                                    if (value != null) {
+                                                        args[i] = convertValue(value, params[i].getType());
+                                                    } else {
+                                                        if (params[i].getType().isPrimitive()) {
+                                                            args[i] = getDefaultValue(params[i].getType());
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                if (params[i].getType().isPrimitive()) {
+                                                    args[i] = getDefaultValue(params[i].getType());
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -143,5 +167,26 @@ public class FrontServlet extends HttpServlet {
         } else {
             throw new IllegalArgumentException("Unsupported type: " + type);
         }
+    }
+
+    private Object getDefaultValue(Class<?> type) {
+        if (type == int.class || type == Integer.class) {
+            return 0;
+        } else if (type == double.class || type == Double.class) {
+            return 0.0;
+        } else if (type == boolean.class || type == Boolean.class) {
+            return false;
+        } else if (type == long.class || type == Long.class) {
+            return 0L;
+        } else if (type == float.class || type == Float.class) {
+            return 0.0f;
+        } else if (type == char.class || type == Character.class) {
+            return '\0';
+        } else if (type == byte.class || type == Byte.class) {
+            return (byte) 0;
+        } else if (type == short.class || type == Short.class) {
+            return (short) 0;
+        }
+        return null;
     }
 }
