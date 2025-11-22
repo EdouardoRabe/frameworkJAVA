@@ -51,7 +51,7 @@ public class FrontServlet extends HttpServlet {
         String resourcePath = requestURI.substring(contextPath.length());
 
         if (registry != null) {
-            java.util.List<mg.framework.registry.HandlerMethod> handlers = registry.findMatching(resourcePath);
+            java.util.List<mg.framework.registry.HandlerMethod> handlers = registry.findMatching(resourcePath, request.getMethod());
             if (handlers != null && !handlers.isEmpty()) {
                 for (mg.framework.registry.HandlerMethod h : handlers) {
                     try {
