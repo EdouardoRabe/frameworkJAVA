@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
 import java.util.Map;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import mg.framework.annotations.RequestParam;
@@ -101,6 +103,13 @@ public class FrontServlet extends HttpServlet {
                                             }
                                         }
                                     }
+                                    // Binder les objets personnalisés
+                                    Map<String, Object> customObjects = bindCustomObjects(params, request);
+                                    for (int i = 0; i < params.length; i++) {
+                                        if (args[i] == null && isCustomObject(params[i].getType())) {
+                                            args[i] = customObjects.get(params[i].getName());
+                                        }
+                                    }
                                 } 
                             }
                         } else {
@@ -118,6 +127,13 @@ public class FrontServlet extends HttpServlet {
                                     args[i] = getDefaultValue(params[i].getType());
                                 } else if (isMapStringObject(params[i])) {
                                     args[i] = request.getParameterMap();
+                                }
+                            }
+                            // Binder les objets personnalisés
+                            Map<String, Object> customObjects = bindCustomObjects(params, request);
+                            for (int i = 0; i < params.length; i++) {
+                                if (args[i] == null && isCustomObject(params[i].getType())) {
+                                    args[i] = customObjects.get(params[i].getName());
                                 }
                             }
                         }
@@ -183,10 +199,106 @@ public class FrontServlet extends HttpServlet {
     private Object convertValue(String value, Class<?> type) {
         if (type == int.class || type == Integer.class) {
             return Integer.parseInt(value);
+        } else if (type == double.class || type == Double.class) {
+            return Double.parseDouble(value);
+        } else if (type == boolean.class || type == Boolean.class) {
+            return Boolean.parseBoolean(value);
+        } else if (type == long.class || type == Long.class) {
+            return Long.parseLong(value);
+        } else if (type == float.class || type == Float.class) {
+            return Float.parseFloat(value);
+        } else if (type == char.class || type == Character.class) {
+            return value.length() > 0 ? value.charAt(0) : '\0';
+        } else if (type == byte.class || type == Byte.class) {
+            return Byte.parseByte(value);
+        } else if (type == short.class || type == Short.class) {
+            return Short.parseShort(value);
         } else if (type == String.class) {
             return value;
         } else {
             throw new IllegalArgumentException("Unsupported type: " + type);
+        }
+    }
+
+    private Map<String, Object> bindCustomObjects(java.lang.reflect.Parameter[] methodParams, HttpServletRequest request) {
+        Map<String, Object> boundObjects = new java.util.HashMap<>();
+        Map<String, String[]> paramMap = request.getParameterMap();
+
+        for (Map.Entry<String, String[]> entry : paramMap.entrySet()) {
+            String paramName = entry.getKey();
+            if (paramName.contains(".")) {
+                String[] parts = paramName.split("\\.", 2);
+                if (parts.length == 2) {
+                    String objectName = parts[0];
+                    String propertyName = parts[1];
+                    String[] values = entry.getValue();
+                    String value = values.length > 0 ? values[0] : null;
+
+                    // Trouver le paramètre correspondant
+                    for (java.lang.reflect.Parameter param : methodParams) {
+                        if (param.getName().equals(objectName) && isCustomObject(param.getType())) {
+                            Object instance = boundObjects.get(objectName);
+                            if (instance == null) {
+                                try {
+                                    instance = param.getType().getDeclaredConstructor().newInstance();
+                                    boundObjects.put(objectName, instance);
+                                } catch (Exception e) {
+                                    // Ignore si pas de constructeur par défaut
+                                    continue;
+                                }
+                            }
+                            // Assigner la propriété
+                            setProperty(instance, propertyName, value);
+                        }
+                    }
+                }
+            }
+        }
+        return boundObjects;
+    }
+
+    private boolean isCustomObject(Class<?> type) {
+        return !type.isPrimitive() && !type.equals(String.class) && !type.equals(Map.class) && !type.getName().startsWith("java.");
+    }
+
+    private void setProperty(Object instance, String propertyName, String value) {
+        try {
+            // Find field type if exists
+            Class<?> clazz = instance.getClass();
+            java.lang.reflect.Field field = null;
+            try {
+                field = clazz.getDeclaredField(propertyName);
+            } catch (NoSuchFieldException nsf) {
+                // It's okay if field not found; we can still try setter
+            }
+
+            // Essayer le setter (match by name and parameter count 1)
+            String setterName = "set" + propertyName.substring(0, 1).toUpperCase() + propertyName.substring(1);
+            Method setter = null;
+            for (Method m : clazz.getMethods()) {
+                if (m.getName().equals(setterName) && m.getParameterCount() == 1) {
+                    setter = m;
+                    break;
+                }
+            }
+            if (setter != null) {
+                Class<?> paramType = setter.getParameterTypes()[0];
+                Object converted = value == null ? null : convertValue(value, paramType);
+                setter.invoke(instance, converted);
+                return;
+            }
+
+            // Essayer le champ
+            if (field != null) {
+                field.setAccessible(true);
+                if (value == null) {
+                    field.set(instance, null);
+                } else {
+                    field.set(instance, convertValue(value, field.getType()));
+                }
+            }
+        } catch (Exception e) {
+            // Ignore si pas de setter ou champ ou conversion fail
         }
     }
 
