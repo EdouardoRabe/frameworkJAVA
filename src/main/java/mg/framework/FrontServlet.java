@@ -16,7 +16,10 @@ import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import mg.framework.annotations.RequestParam;
+import mg.framework.annotations.Json;
 import mg.framework.model.ModelView;
+import mg.framework.model.JsonResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 
 @WebServlet(name = "FrontServlet", urlPatterns = {"/"}, loadOnStartup = 1)
@@ -102,7 +105,6 @@ public class FrontServlet extends HttpServlet {
                                             }
                                         }
                                     }
-                                    // Lier les objets personnalisés
                                     Map<String, Object> customObjects = bindCustomObjects(params, request);
                                     for (int i = 0; i < params.length; i++) {
                                         if (args[i] == null && isCustomObject(params[i].getType())) {
@@ -128,7 +130,6 @@ public class FrontServlet extends HttpServlet {
                                     args[i] = request.getParameterMap();
                                 }
                             }
-                            // Lier les objets personnalisés
                             Map<String, Object> customObjects = bindCustomObjects(params, request);
                             for (int i = 0; i < params.length; i++) {
                                 if (args[i] == null && isCustomObject(params[i].getType())) {
@@ -137,7 +138,30 @@ public class FrontServlet extends HttpServlet {
                             }
                         }
                         Object result = h.getMethod().invoke(controllerInstance, args);
-                        if (result instanceof String) {
+
+                        if (h.getMethod().isAnnotationPresent(Json.class)) {
+                            response.setContentType("application/json");
+                            response.setCharacterEncoding("UTF-8");
+                            ObjectMapper mapper = new ObjectMapper();
+                            try {
+                                Object data = null;
+                                if (result instanceof ModelView) {
+                                    ModelView mv = (ModelView) result;
+                                    Map<String, Object> modelData = new java.util.HashMap<>();
+                                    modelData.put("attributes", mv.getAttributes());
+                                    data = modelData;
+                                } else if (result instanceof String) {
+                                    data = result;
+                                } else {
+                                    data = result;
+                                }
+                                JsonResponse jsonResponse = new JsonResponse("success", 200, data, "Opération réussie");
+                                mapper.writeValue(response.getWriter(), jsonResponse);
+                            } catch (Exception e) {
+                                JsonResponse errorResponse = new JsonResponse("error", 500, null, "Erreur de sérialisation JSON: " + e.getMessage());
+                                mapper.writeValue(response.getWriter(), errorResponse);
+                            }
+                        } else if (result instanceof String) {
                             response.getWriter().println((String) result);
                         } else if (result instanceof ModelView) {
                             ModelView mv = (ModelView) result;
@@ -226,36 +250,31 @@ public class FrontServlet extends HttpServlet {
 
         for (Map.Entry<String, String[]> entry : paramMap.entrySet()) {
             String paramName = entry.getKey();
-            if (!paramName.contains(".")) continue; // seulement les paramètres de la forme object.*
+            if (!paramName.contains(".")) continue; 
             String[] tokens = paramName.split("\\.");
-            if (tokens.length < 2) continue; // doit être au minimum object.prop
+            if (tokens.length < 2) continue; 
             String rootName = tokens[0];
-            String[] path = java.util.Arrays.copyOfRange(tokens, 1, tokens.length); // chemin restant
+            String[] path = java.util.Arrays.copyOfRange(tokens, 1, tokens.length);
             String[] values = entry.getValue();
             String value = values.length > 0 ? values[0] : null;
 
-            // trouver le paramètre de méthode correspondant (paramètre racine)
             for (java.lang.reflect.Parameter param : methodParams) {
                 if (!param.getName().equals(rootName) || !isCustomObject(param.getType())) continue;
-                // créer ou récupérer l'instance racine
                 Object rootInstance = boundObjects.get(rootName);
                 if (rootInstance == null) {
                     try {
                         rootInstance = param.getType().getDeclaredConstructor().newInstance();
                         boundObjects.put(rootName, rootInstance);
                     } catch (Exception e) {
-                        // impossible de créer l'instance racine, ignorer
                         break;
                     }
                 }
 
-                // Parcourir le chemin jusqu'à l'objet final (gère aussi les listes indexées p.amis[0].nom et p.amis[].nom)
                 Object current = rootInstance;
                 for (int i = 0; i < path.length - 1; i++) {
                     String token = path[i];
                     PathToken ptoken = parsePathToken(token);
                     if (ptoken.isList) {
-                            // Propriété de type liste sur l'objet courant
                         Class<?> elementType = getListElementType(current.getClass(), ptoken.name);
                         if (elementType == null) {
                             current = null;
@@ -267,9 +286,7 @@ public class FrontServlet extends HttpServlet {
                             break;
                         }
                         if (ptoken.index == null) {
-                            // append pour objet imbriqué (ex. p.amis[].nom) : créer un nouvel élément et l'utiliser
                             if (elementType.equals(String.class)) {
-                                // impossible d'utiliser [] (append) pour une liste de String imbriquée ; logger et ignorer
                                 bindingErrors.put(paramName, "Impossible d'utiliser [] (append) pour une liste de String imbriquée : " + paramName);
                                 getServletContext().log("Avertissement de liaison : impossible d'utiliser [] pour une liste de String imbriquée : '" + paramName + "'");
                                 current = null;
@@ -290,11 +307,9 @@ public class FrontServlet extends HttpServlet {
                                     break;
                                 }
                                 current = newElem;
-                                // On a déjà ajouté un élément et placé current dessus -> ne pas appeler getOrCreateListElement
                                 continue;
                             }
                         }
-                        // si on a un index explicite, obtenir/créer l'élément à cet index
                         Object elem = getOrCreateListElement(list, ptoken.index, elementType);
                         if (elem == null) {
                             current = null;
@@ -304,7 +319,7 @@ public class FrontServlet extends HttpServlet {
                     } else {
                         Object child = getOrCreateChildInstance(current, ptoken.name);
                         if (child == null) {
-                            current = null; // impossible de continuer
+                            current = null;
                             break;
                         }
                         current = child;
@@ -314,32 +329,25 @@ public class FrontServlet extends HttpServlet {
                     String lastToken = path[path.length - 1];
                     PathToken lastPtoken = parsePathToken(lastToken);
                     if (lastPtoken.isList) {
-                        // La feuille est un élément de liste : ex. p.listEcole[0] ou p.listEcole[]
                         Class<?> elementType = getListElementType(current.getClass(), lastPtoken.name);
                         if (elementType == null) {
-                                // Type d'élément inconnu, ignorer
                         } else {
                             java.util.List<Object> list = getOrCreateListOnParent(current, lastPtoken.name, elementType);
                             if (list != null) {
-                                if (lastPtoken.index == null) { // append
-                                    // pour les listes de type simple (String) ajouter la valeur,
-                                    // pour les listes d'objets créer un nouvel élément par valeur et l'ajouter
+                                if (lastPtoken.index == null) { 
                                     if (elementType.equals(String.class)) {
-                                        // Ajouter toutes les valeurs POSTées pour ce param (p.listEcole[] -> String[])
                                         for (String v : values) {
                                             if (v != null && !v.trim().isEmpty()) {
                                                 list.add(v);
                                             }
                                         }
                                     } else {
-                                        // Ajout d'objets pour chaque valeur envoyée (même si la valeur en elle-même est ignorée)
                                         for (String v : values) {
                                             Object newElem = appendListElement(list, elementType);
                                             if (newElem == null) {
                                                 bindingErrors.put(paramName, "Impossible d'ajouter un nouvel élément de type '" + elementType.getSimpleName() + "' à la liste '" + lastPtoken.name + "'");
                                                 getServletContext().log("Avertissement de liaison : impossible d'ajouter un nouvel élément de type '" + elementType.getSimpleName() + "' à la liste '" + lastPtoken.name + "' pour '" + paramName + "'");
                                             } else {
-                                                // Si une valeur textuelle n'est pas compatible avec l'objet, on la note
                                                 if (v != null && !v.trim().isEmpty()) {
                                                     bindingErrors.put(paramName, "Valeur ignorée lors de l'ajout d'un objet sur la liste '" + lastPtoken.name + "' : " + v);
                                                     getServletContext().log("Avertissement de liaison : valeur ignorée pour l'ajout d'un objet sur '" + lastPtoken.name + "' : '" + v + "'");
@@ -352,13 +360,11 @@ public class FrontServlet extends HttpServlet {
                                         ensureListSize(list, lastPtoken.index + 1);
                                         list.set(lastPtoken.index, value);
                                     } else {
-                                        // L'élément est un objet et on a un index explicite : créer/obtenir l'élément
                                         Object elem = getOrCreateListElement(list, lastPtoken.index, elementType);
                                         if (elem == null) {
                                             bindingErrors.put(paramName, "Impossible de créer/lire l'élément indexé '" + lastPtoken.index + "' de la liste '" + lastPtoken.name + "'");
                                             getServletContext().log("Avertissement de liaison : impossible de créer/lire l'élément indexé '" + lastPtoken.index + "' de la liste '" + lastPtoken.name + "' pour '" + paramName + "' ");
                                         } else {
-                                            // on ne sait pas comment convertir 'value' en objet complexe -> le signaler
                                             if (value != null && !value.trim().isEmpty()) {
                                                 bindingErrors.put(paramName, "Valeur ignorée pour l'élément objet indexé '" + lastPtoken.index + "' de la liste '" + lastPtoken.name + "' : " + value);
                                                 getServletContext().log("Avertissement de liaison : valeur ignorée pour l'élément objet indexé '" + lastPtoken.index + "' de la liste '" + lastPtoken.name + "' : '" + value + "'");
@@ -372,7 +378,7 @@ public class FrontServlet extends HttpServlet {
                         setProperty(current, lastPtoken.name, value);
                     }
                 }
-                break; // paramètre racine trouvé, arrêter
+                break; 
             }
         }
         if (!bindingErrors.isEmpty()) {
@@ -383,7 +389,7 @@ public class FrontServlet extends HttpServlet {
 
     private static class PathToken {
         String name;
-        Integer index; // null si pas d'indice (pas une liste) ou null si append
+        Integer index; 
         boolean isList;
         PathToken(String name, Integer index, boolean isList) {
             this.name = name; this.index = index; this.isList = isList;
@@ -401,7 +407,7 @@ public class FrontServlet extends HttpServlet {
         String name = token.substring(0, b);
         String inside = token.substring(b+1, e);
         if (inside.length() == 0) {
-            return new PathToken(name, null, true); // append
+            return new PathToken(name, null, true); 
         }
         try {
             int idx = Integer.parseInt(inside);
@@ -412,8 +418,6 @@ public class FrontServlet extends HttpServlet {
     }
 
     private Class<?> getListElementType(Class<?> clazz, String listFieldName) {
-        // Try setter generic param
-            // Essayer le paramètre générique du setter
         String setterName = "set" + listFieldName.substring(0,1).toUpperCase() + listFieldName.substring(1);
         for (Method m : clazz.getMethods()) {
             if (m.getName().equals(setterName) && m.getParameterCount() == 1) {
@@ -427,8 +431,6 @@ public class FrontServlet extends HttpServlet {
                 }
             }
         }
-        // Try field
-            // Essayer le champ
         try {
             java.lang.reflect.Field f = clazz.getDeclaredField(listFieldName);
             Type t = f.getGenericType();
@@ -440,7 +442,6 @@ public class FrontServlet extends HttpServlet {
                 }
             }
         } catch (Exception e) {
-            // ignore
                 // ignorer
         }
         return null;
@@ -457,7 +458,6 @@ public class FrontServlet extends HttpServlet {
                 Object o = getter.invoke(parent);
                 if (o instanceof java.util.List) list = (java.util.List<Object>) o;
             } catch (Exception e) {
-                // ignore
                     // ignorer
             }
 
@@ -489,7 +489,6 @@ public class FrontServlet extends HttpServlet {
         }
     }
 
-    /** Ajouter un nouvel élément de `elementType` à la `list` et le retourner */
     private Object appendListElement(java.util.List<Object> list, Class<?> elementType) {
         try {
             Object newElem = elementType.getDeclaredConstructor().newInstance();
@@ -583,6 +582,21 @@ public class FrontServlet extends HttpServlet {
 
     private boolean isCustomObject(Class<?> type) {
         return !type.isPrimitive() && !type.equals(String.class) && !type.equals(Map.class) && !type.getName().startsWith("java.");
+    }
+
+    private boolean isListOfCustomObjects(java.lang.reflect.Parameter parameter) {
+        Type type = parameter.getParameterizedType();
+        if (type instanceof ParameterizedType) {
+            ParameterizedType pt = (ParameterizedType) type;
+            if (pt.getRawType().equals(java.util.List.class)) {
+                Type[] args = pt.getActualTypeArguments();
+                if (args.length == 1 && args[0] instanceof Class) {
+                    Class<?> elementType = (Class<?>) args[0];
+                    return isCustomObject(elementType);
+                }
+            }
+        }
+        return false;
     }
 
     private void setProperty(Object instance, String propertyName, String value) {
