@@ -110,6 +110,15 @@ public class FrontServlet extends HttpServlet {
                                         if (args[i] == null && isCustomObject(params[i].getType())) {
                                             args[i] = customObjects.get(params[i].getName());
                                         }
+                                        // Support List<T> et T[]
+                                        if (args[i] == null && (isListOfCustomObjects(params[i]) || isArrayOfCustomObjects(params[i]))) {
+                                            Object listObj = customObjects.get(params[i].getName());
+                                            if (listObj instanceof java.util.List) {
+                                                @SuppressWarnings("unchecked")
+                                                java.util.List<Object> castedList = (java.util.List<Object>) listObj;
+                                                args[i] = convertListToArrayIfNeeded(params[i], castedList);
+                                            }
+                                        }
                                     }
                                 } 
                             }
@@ -134,6 +143,15 @@ public class FrontServlet extends HttpServlet {
                             for (int i = 0; i < params.length; i++) {
                                 if (args[i] == null && isCustomObject(params[i].getType())) {
                                     args[i] = customObjects.get(params[i].getName());
+                                }
+                                // Support List<T> et T[]
+                                if (args[i] == null && (isListOfCustomObjects(params[i]) || isArrayOfCustomObjects(params[i]))) {
+                                    Object listObj = customObjects.get(params[i].getName());
+                                    if (listObj instanceof java.util.List) {
+                                        @SuppressWarnings("unchecked")
+                                        java.util.List<Object> castedList = (java.util.List<Object>) listObj;
+                                        args[i] = convertListToArrayIfNeeded(params[i], castedList);
+                                    }
                                 }
                             }
                         }
@@ -250,27 +268,85 @@ public class FrontServlet extends HttpServlet {
 
         for (Map.Entry<String, String[]> entry : paramMap.entrySet()) {
             String paramName = entry.getKey();
-            if (!paramName.contains(".")) continue; 
-            String[] tokens = paramName.split("\\.");
-            if (tokens.length < 2) continue; 
-            String rootName = tokens[0];
-            String[] path = java.util.Arrays.copyOfRange(tokens, 1, tokens.length);
+            if (!paramName.contains(".") && !paramName.contains("[")) continue; 
+            
+            // Parse le root: peut être "p.nom", "p[0].nom", "p[].nom"
+            String rootToken;
+            String remainingPath;
+            int firstDot = paramName.indexOf('.');
+            if (firstDot == -1) {
+                // Cas comme "p[0]" sans point (valeur simple pour le root lui-même) - ignoré
+                continue;
+            }
+            rootToken = paramName.substring(0, firstDot);
+            remainingPath = paramName.substring(firstDot + 1);
+            
+            PathToken rootParsed = parsePathToken(rootToken);
+            String rootName = rootParsed.name;
+            
+            String[] path = remainingPath.split("\\.");
+            if (path.length < 1) continue; 
             String[] values = entry.getValue();
             String value = values.length > 0 ? values[0] : null;
 
             for (java.lang.reflect.Parameter param : methodParams) {
-                if (!param.getName().equals(rootName) || !isCustomObject(param.getType())) continue;
-                Object rootInstance = boundObjects.get(rootName);
-                if (rootInstance == null) {
-                    try {
-                        rootInstance = param.getType().getDeclaredConstructor().newInstance();
-                        boundObjects.put(rootName, rootInstance);
-                    } catch (Exception e) {
+                if (!param.getName().equals(rootName)) continue;
+                
+                // Vérifier si c'est un List<T> ou T[] au niveau root
+                boolean isRootList = isListOfCustomObjects(param) || isArrayOfCustomObjects(param);
+                boolean isRootCustomObject = isCustomObject(param.getType());
+                
+                if (!isRootList && !isRootCustomObject) continue;
+                
+                Object current = null;
+                
+                // Cas où le root est un List<T> ou T[]
+                if (isRootList && rootParsed.isList) {
+                    @SuppressWarnings("unchecked")
+                    java.util.List<Object> rootList = (java.util.List<Object>) boundObjects.get(rootName);
+                    if (rootList == null) {
+                        rootList = new java.util.ArrayList<>();
+                        boundObjects.put(rootName, rootList);
+                    }
+                    
+                    Class<?> elementType = getListElementTypeFromParameter(param);
+                    if (elementType == null) {
+                        bindingErrors.put(paramName, "Impossible de déterminer le type d'élément pour la liste '" + rootName + "'");
                         break;
                     }
+                    
+                    if (rootParsed.index == null) {
+                        // Cas p[].nom - append
+                        Object newElem = appendListElement(rootList, elementType);
+                        if (newElem == null) {
+                            bindingErrors.put(paramName, "Impossible d'instancier un élément pour '" + rootName + "'");
+                            break;
+                        }
+                        current = newElem;
+                    } else {
+                        // Cas p[0].nom - index précis
+                        current = getOrCreateListElement(rootList, rootParsed.index, elementType);
+                        if (current == null) {
+                            bindingErrors.put(paramName, "Impossible de créer l'élément [" + rootParsed.index + "] pour '" + rootName + "'");
+                            break;
+                        }
+                    }
+                } else if (isRootCustomObject && !rootParsed.isList) {
+                    // Cas classique: objet simple au root
+                    Object rootInstance = boundObjects.get(rootName);
+                    if (rootInstance == null) {
+                        try {
+                            rootInstance = param.getType().getDeclaredConstructor().newInstance();
+                            boundObjects.put(rootName, rootInstance);
+                        } catch (Exception e) {
+                            break;
+                        }
+                    }
+                    current = rootInstance;
+                } else {
+                    // Mismatch: root déclaré comme liste mais pas utilisé comme tel, ou vice versa
+                    continue;
                 }
-
-                Object current = rootInstance;
                 for (int i = 0; i < path.length - 1; i++) {
                     String token = path[i];
                     PathToken ptoken = parsePathToken(token);
@@ -597,6 +673,48 @@ public class FrontServlet extends HttpServlet {
             }
         }
         return false;
+    }
+
+    private boolean isArrayOfCustomObjects(java.lang.reflect.Parameter parameter) {
+        Class<?> type = parameter.getType();
+        if (type.isArray()) {
+            Class<?> componentType = type.getComponentType();
+            return isCustomObject(componentType);
+        }
+        return false;
+    }
+
+    private Class<?> getListElementTypeFromParameter(java.lang.reflect.Parameter parameter) {
+        // Pour List<T>
+        Type type = parameter.getParameterizedType();
+        if (type instanceof ParameterizedType) {
+            ParameterizedType pt = (ParameterizedType) type;
+            if (pt.getRawType().equals(java.util.List.class)) {
+                Type[] args = pt.getActualTypeArguments();
+                if (args.length == 1 && args[0] instanceof Class) {
+                    return (Class<?>) args[0];
+                }
+            }
+        }
+        // Pour T[]
+        Class<?> rawType = parameter.getType();
+        if (rawType.isArray()) {
+            return rawType.getComponentType();
+        }
+        return null;
+    }
+
+    private Object convertListToArrayIfNeeded(java.lang.reflect.Parameter parameter, java.util.List<Object> list) {
+        Class<?> type = parameter.getType();
+        if (type.isArray()) {
+            Class<?> componentType = type.getComponentType();
+            Object array = java.lang.reflect.Array.newInstance(componentType, list.size());
+            for (int i = 0; i < list.size(); i++) {
+                java.lang.reflect.Array.set(array, i, list.get(i));
+            }
+            return array;
+        }
+        return list;
     }
 
     private void setProperty(Object instance, String propertyName, String value) {
