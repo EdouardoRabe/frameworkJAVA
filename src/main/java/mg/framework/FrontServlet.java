@@ -66,6 +66,7 @@ public class FrontServlet extends HttpServlet {
                         String handlerPath = h.getPath();
                         Object[] args = new Object[0];
                         java.lang.reflect.Parameter[] params = h.getMethod().getParameters();
+                        boolean hasComplexParams = hasComplexParams(request);
                         if (handlerPath.contains("{")) {
                             List<String> vars = extractVarNames(handlerPath);
                             Pattern compiled = registry.getCompiledPattern(handlerPath);
@@ -74,49 +75,52 @@ public class FrontServlet extends HttpServlet {
                                 args = new Object[params.length];
 
                                 if (matcher.matches()) {
-                                    for (int i = 0; i < params.length; i++) {
-                                        String paramName = params[i].getName();
-                                        int varIndex = vars.indexOf(paramName);
-                                        if (varIndex != -1) {
-                                            String value = matcher.group(varIndex + 1);
-                                            args[i] = convertValue(value, params[i].getType());
-                                        } else {
-                                            RequestParam requestParam = params[i].getAnnotation(RequestParam.class);
-                                            if (requestParam != null) {
-                                                String reqParamName = requestParam.value().isEmpty() ? paramName : requestParam.value();
-                                                int pathVarIndex = vars.indexOf(reqParamName);
-                                                if (pathVarIndex != -1) {
-                                                    String value = matcher.group(pathVarIndex + 1);
-                                                    args[i] = convertValue(value, params[i].getType());
-                                                } else {
-                                                    String value = request.getParameter(reqParamName);
-                                                    if (value != null) {
-                                                        args[i] = convertValue(value, params[i].getType());
-                                                    } else if (params[i].getType().isPrimitive()) {
-                                                        args[i] = getDefaultValue(params[i].getType());
-                                                    } else if (isMapStringObject(params[i])) {
-                                                        args[i] = request.getParameterMap();
-                                                    }
+                                    if (hasComplexParams) {
+                                        Map<String, Object> customObjects = bindCustomObjects(params, request);
+                                        for (int i = 0; i < params.length; i++) {
+                                            if (args[i] == null && isCustomObject(params[i].getType())) {
+                                                args[i] = customObjects.get(params[i].getName());
+                                            }
+                                            // Support List<T> et T[]
+                                            if ((isListOfCustomObjects(params[i]) || isArrayOfCustomObjects(params[i]))) {
+                                                Object listObj = customObjects.get(params[i].getName());
+                                                if (listObj instanceof java.util.List) {
+                                                    @SuppressWarnings("unchecked")
+                                                    java.util.List<Object> castedList = (java.util.List<Object>) listObj;
+                                                    args[i] = convertListToArrayIfNeeded(params[i], castedList);
                                                 }
-                                            } else if (params[i].getType().isPrimitive()) {
-                                                args[i] = getDefaultValue(params[i].getType());
-                                            } else if (isMapStringObject(params[i])) {
-                                                args[i] = request.getParameterMap();
                                             }
                                         }
-                                    }
-                                    Map<String, Object> customObjects = bindCustomObjects(params, request);
-                                    for (int i = 0; i < params.length; i++) {
-                                        if (args[i] == null && isCustomObject(params[i].getType())) {
-                                            args[i] = customObjects.get(params[i].getName());
-                                        }
-                                        // Support List<T> et T[]
-                                        if (args[i] == null && (isListOfCustomObjects(params[i]) || isArrayOfCustomObjects(params[i]))) {
-                                            Object listObj = customObjects.get(params[i].getName());
-                                            if (listObj instanceof java.util.List) {
-                                                @SuppressWarnings("unchecked")
-                                                java.util.List<Object> castedList = (java.util.List<Object>) listObj;
-                                                args[i] = convertListToArrayIfNeeded(params[i], castedList);
+                                    } else {
+                                        for (int i = 0; i < params.length; i++) {
+                                            String paramName = params[i].getName();
+                                            int varIndex = vars.indexOf(paramName);
+                                            if (varIndex != -1) {
+                                                String value = matcher.group(varIndex + 1);
+                                                args[i] = convertValue(value, params[i].getType());
+                                            } else {
+                                                RequestParam requestParam = params[i].getAnnotation(RequestParam.class);
+                                                if (requestParam != null) {
+                                                    String reqParamName = requestParam.value().isEmpty() ? paramName : requestParam.value();
+                                                    int pathVarIndex = vars.indexOf(reqParamName);
+                                                    if (pathVarIndex != -1) {
+                                                        String value = matcher.group(pathVarIndex + 1);
+                                                        args[i] = convertValue(value, params[i].getType());
+                                                    } else {
+                                                        String value = request.getParameter(reqParamName);
+                                                        if (value != null) {
+                                                            args[i] = convertValue(value, params[i].getType());
+                                                        } else if (params[i].getType().isPrimitive()) {
+                                                            args[i] = getDefaultValue(params[i].getType());
+                                                        } else if (isMapStringObject(params[i])) {
+                                                            args[i] = request.getParameterMap();
+                                                        }
+                                                    }
+                                                } else if (params[i].getType().isPrimitive()) {
+                                                    args[i] = getDefaultValue(params[i].getType());
+                                                } else if (isMapStringObject(params[i])) {
+                                                    args[i] = request.getParameterMap();
+                                                }
                                             }
                                         }
                                     }
@@ -124,33 +128,36 @@ public class FrontServlet extends HttpServlet {
                             }
                         } else {
                             args = new Object[params.length];
-                            for (int i = 0; i < params.length; i++) {
-                                String sourceName = params[i].getName();
-                                RequestParam requestParam = params[i].getAnnotation(RequestParam.class);
-                                if (requestParam != null && !requestParam.value().isEmpty()) {
-                                    sourceName = requestParam.value();
+                            if (hasComplexParams) {
+                                Map<String, Object> customObjects = bindCustomObjects(params, request);
+                                for (int i = 0; i < params.length; i++) {
+                                    if (args[i] == null && isCustomObject(params[i].getType())) {
+                                        args[i] = customObjects.get(params[i].getName());
+                                    }
+                                    // Support List<T> et T[]
+                                    if ((isListOfCustomObjects(params[i]) || isArrayOfCustomObjects(params[i]))) {
+                                        Object listObj = customObjects.get(params[i].getName());
+                                        if (listObj instanceof java.util.List) {
+                                            @SuppressWarnings("unchecked")
+                                            java.util.List<Object> castedList = (java.util.List<Object>) listObj;
+                                            args[i] = convertListToArrayIfNeeded(params[i], castedList);
+                                        }
+                                    }
                                 }
-                                String value = request.getParameter(sourceName);
-                                if (value != null) {
-                                    args[i] = convertValue(value, params[i].getType());
-                                } else if (params[i].getType().isPrimitive()) {
-                                    args[i] = getDefaultValue(params[i].getType());
-                                } else if (isMapStringObject(params[i])) {
-                                    args[i] = request.getParameterMap();
-                                }
-                            }
-                            Map<String, Object> customObjects = bindCustomObjects(params, request);
-                            for (int i = 0; i < params.length; i++) {
-                                if (args[i] == null && isCustomObject(params[i].getType())) {
-                                    args[i] = customObjects.get(params[i].getName());
-                                }
-                                // Support List<T> et T[]
-                                if (args[i] == null && (isListOfCustomObjects(params[i]) || isArrayOfCustomObjects(params[i]))) {
-                                    Object listObj = customObjects.get(params[i].getName());
-                                    if (listObj instanceof java.util.List) {
-                                        @SuppressWarnings("unchecked")
-                                        java.util.List<Object> castedList = (java.util.List<Object>) listObj;
-                                        args[i] = convertListToArrayIfNeeded(params[i], castedList);
+                            } else {
+                                for (int i = 0; i < params.length; i++) {
+                                    String sourceName = params[i].getName();
+                                    RequestParam requestParam = params[i].getAnnotation(RequestParam.class);
+                                    if (requestParam != null && !requestParam.value().isEmpty()) {
+                                        sourceName = requestParam.value();
+                                    }
+                                    String value = request.getParameter(sourceName);
+                                    if (value != null) {
+                                        args[i] = convertValue(value, params[i].getType());
+                                    } else if (params[i].getType().isPrimitive()) {
+                                        args[i] = getDefaultValue(params[i].getType());
+                                    } else if (isMapStringObject(params[i])) {
+                                        args[i] = request.getParameterMap();
                                     }
                                 }
                             }
@@ -186,7 +193,19 @@ public class FrontServlet extends HttpServlet {
                             RequestDispatcher dispatcher = getServletContext().getRequestDispatcher("/" + mv.getView());
                             if (dispatcher != null) {
                                 for (java.util.Map.Entry<String, Object> entry : mv.getAttributes().entrySet()) {
-                                    request.setAttribute(entry.getKey(), entry.getValue());
+                                    Object value = entry.getValue();
+                                    if (value != null && value.getClass().isArray()) {
+                                        // Convertir tableau en List pour compatibilité JSP
+                                        int len = java.lang.reflect.Array.getLength(value);
+                                        java.util.List<Object> list = new java.util.ArrayList<>(len);
+                                        for (int ai = 0; ai < len; ai++) {
+                                            list.add(java.lang.reflect.Array.get(value, ai));
+                                        }
+                                        getServletContext().log("Converted attribute '" + entry.getKey() + "' from array to List for JSP compatibility");
+                                        request.setAttribute(entry.getKey(), list);
+                                    } else {
+                                        request.setAttribute(entry.getKey(), value);
+                                    }
                                 }
                                 dispatcher.forward(request, response);
                             } else {
@@ -785,6 +804,17 @@ public class FrontServlet extends HttpServlet {
             if (pt.getRawType().equals(Map.class)) {
                 Type[] args = pt.getActualTypeArguments();
                 return args.length == 2 && args[0].equals(String.class) && args[1].equals(Object.class);
+            }
+        }
+        return false;
+    }
+
+    private boolean hasComplexParams(HttpServletRequest request) {
+        if (request == null) return false;
+        Map<String, String[]> map = request.getParameterMap();
+        for (String key : map.keySet()) {
+            if (key != null && (key.contains(".") || key.contains("["))) {
+                return true;
             }
         }
         return false;
