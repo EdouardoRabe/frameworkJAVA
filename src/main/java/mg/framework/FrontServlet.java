@@ -82,14 +82,19 @@ public class FrontServlet extends HttpServlet {
 
                                 boolean isMultipart = request.getContentType() != null && request.getContentType().toLowerCase().startsWith("multipart/");
                                 if (isMultipart) {
-                                    int mapIndex = -1;
+                                    int byteMapIndex = -1;
+                                    int uploadedListIndex = -1;
                                     for (int mi = 0; mi < params.length; mi++) {
-                                        if (isMapStringByteArray(params[mi])) { mapIndex = mi; break; }
+                                        if (isMapStringListUploadedFile(params[mi])) { uploadedListIndex = mi; break; }
+                                        if (isMapStringByteArray(params[mi])) { byteMapIndex = mi; break; }
                                     }
-                                    if (mapIndex == -1) {
-                                        throw new ServletException("Multipart request received but handler method does not declare Map<String,byte[]> parameter to receive files");
+                                    if (uploadedListIndex != -1) {
+                                        args[uploadedListIndex] = buildMultipartUploadedFilesMap(request);
+                                    } else if (byteMapIndex != -1) {
+                                        args[byteMapIndex] = buildMultipartByteMap(request);
+                                    } else {
+                                        throw new ServletException("Requete multipart recue, mais la methode du gestionnaire ne declare pas de parametre Map<String,byte[]> ni Map<String,List<UploadedFile>> pour recevoir les fichiers");
                                     }
-                                    args[mapIndex] = buildMultipartByteMap(request);
                                 }
 
                                 if (matcher.matches()) {
@@ -148,14 +153,19 @@ public class FrontServlet extends HttpServlet {
                             args = new Object[params.length];
                             boolean isMultipart = request.getContentType() != null && request.getContentType().toLowerCase().startsWith("multipart/");
                             if (isMultipart) {
-                                int mapIndex = -1;
+                                int byteMapIndex = -1;
+                                int uploadedListIndex = -1;
                                 for (int mi = 0; mi < params.length; mi++) {
-                                    if (isMapStringByteArray(params[mi])) { mapIndex = mi; break; }
+                                    if (isMapStringListUploadedFile(params[mi])) { uploadedListIndex = mi; break; }
+                                    if (isMapStringByteArray(params[mi])) { byteMapIndex = mi; break; }
                                 }
-                                if (mapIndex == -1) {
-                                    throw new ServletException("Multipart request received but handler method does not declare Map<String,byte[]> parameter to receive files");
+                                if (uploadedListIndex != -1) {
+                                    args[uploadedListIndex] = buildMultipartUploadedFilesMap(request);
+                                } else if (byteMapIndex != -1) {
+                                    args[byteMapIndex] = buildMultipartByteMap(request);
+                                } else {
+                                    throw new ServletException("Requete multipart recue, mais la methode du gestionnaire ne declare pas de parametre Map<String,byte[]> ni Map<String,List<UploadedFile>> pour recevoir les fichiers");
                                 }
-                                args[mapIndex] = buildMultipartByteMap(request);
                             }
                             if (hasComplexParams) {
                                 Map<String, Object> customObjects = bindCustomObjects(params, request);
@@ -871,6 +881,50 @@ public class FrontServlet extends HttpServlet {
             }
         } catch (Exception e) {
             throw new ServletException("Erreur lors de la lecture des parties multipart: " + e.getMessage(), e);
+        }
+        return map;
+    }
+
+    private boolean isMapStringListUploadedFile(java.lang.reflect.Parameter parameter) {
+        Type type = parameter.getParameterizedType();
+        if (type instanceof ParameterizedType) {
+            ParameterizedType pt = (ParameterizedType) type;
+            if (pt.getRawType().equals(Map.class)) {
+                Type[] args = pt.getActualTypeArguments();
+                if (args.length == 2 && args[0].equals(String.class)) {
+                    Type second = args[1];
+                    if (second instanceof ParameterizedType) {
+                        ParameterizedType inner = (ParameterizedType) second;
+                        if (inner.getRawType().equals(java.util.List.class)) {
+                            Type[] innerArgs = inner.getActualTypeArguments();
+                            if (innerArgs.length == 1 && innerArgs[0] instanceof Class) {
+                                Class<?> elem = (Class<?>) innerArgs[0];
+                                return elem.getName().equals("mg.framework.upload.UploadedFile");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private Map<String, java.util.List<mg.framework.upload.UploadedFile>> buildMultipartUploadedFilesMap(HttpServletRequest req) throws ServletException {
+        Map<String, java.util.List<mg.framework.upload.UploadedFile>> map = new java.util.HashMap<>();
+        try {
+            Collection<Part> parts = req.getParts();
+            for (Part p : parts) {
+                String submitted = null;
+                try { submitted = p.getSubmittedFileName(); } catch (Throwable t) { submitted = null; }
+                if (submitted == null) continue; 
+                String name = p.getName();
+                InputStream is = p.getInputStream();
+                byte[] data = is.readAllBytes();
+                mg.framework.upload.UploadedFile uf = new mg.framework.upload.UploadedFile(name, submitted, p.getContentType(), p.getSize(), data);
+                map.computeIfAbsent(name, k -> new java.util.ArrayList<>()).add(uf);
+            }
+        } catch (Exception e) {
+            throw new ServletException("Erreur lors de la lecture des parties multipart (UploadedFile): " + e.getMessage(), e);
         }
         return map;
     }
