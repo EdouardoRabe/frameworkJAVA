@@ -20,9 +20,15 @@ import mg.framework.annotations.Json;
 import mg.framework.model.ModelView;
 import mg.framework.model.JsonResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
+import jakarta.servlet.annotation.MultipartConfig;
+import java.util.Collection;
+import jakarta.servlet.http.Part;
+import java.io.InputStream;
 
 @WebServlet(name = "FrontServlet", urlPatterns = {"/"}, loadOnStartup = 1)
+@MultipartConfig(fileSizeThreshold = 1024 * 1024, // 1MB
+        maxFileSize = 10 * 1024 * 1024, // 10MB
+        maxRequestSize = 20 * 1024 * 1024) // 20MB
 public class FrontServlet extends HttpServlet {
     private mg.framework.registry.ControllerRegistry registry;
 
@@ -73,6 +79,18 @@ public class FrontServlet extends HttpServlet {
                             if (compiled != null) {
                                 Matcher matcher = compiled.matcher(resourcePath);
                                 args = new Object[params.length];
+
+                                boolean isMultipart = request.getContentType() != null && request.getContentType().toLowerCase().startsWith("multipart/");
+                                if (isMultipart) {
+                                    int mapIndex = -1;
+                                    for (int mi = 0; mi < params.length; mi++) {
+                                        if (isMapStringByteArray(params[mi])) { mapIndex = mi; break; }
+                                    }
+                                    if (mapIndex == -1) {
+                                        throw new ServletException("Multipart request received but handler method does not declare Map<String,byte[]> parameter to receive files");
+                                    }
+                                    args[mapIndex] = buildMultipartByteMap(request);
+                                }
 
                                 if (matcher.matches()) {
                                     if (hasComplexParams) {
@@ -128,6 +146,17 @@ public class FrontServlet extends HttpServlet {
                             }
                         } else {
                             args = new Object[params.length];
+                            boolean isMultipart = request.getContentType() != null && request.getContentType().toLowerCase().startsWith("multipart/");
+                            if (isMultipart) {
+                                int mapIndex = -1;
+                                for (int mi = 0; mi < params.length; mi++) {
+                                    if (isMapStringByteArray(params[mi])) { mapIndex = mi; break; }
+                                }
+                                if (mapIndex == -1) {
+                                    throw new ServletException("Multipart request received but handler method does not declare Map<String,byte[]> parameter to receive files");
+                                }
+                                args[mapIndex] = buildMultipartByteMap(request);
+                            }
                             if (hasComplexParams) {
                                 Map<String, Object> customObjects = bindCustomObjects(params, request);
                                 for (int i = 0; i < params.length; i++) {
@@ -807,6 +836,43 @@ public class FrontServlet extends HttpServlet {
             }
         }
         return false;
+    }
+
+    private boolean isMapStringByteArray(java.lang.reflect.Parameter parameter) {
+        Type type = parameter.getParameterizedType();
+        if (type instanceof ParameterizedType) {
+            ParameterizedType pt = (ParameterizedType) type;
+            if (pt.getRawType().equals(Map.class)) {
+                Type[] args = pt.getActualTypeArguments();
+                return args.length == 2 && args[0].equals(String.class) && args[1].equals(byte[].class);
+            }
+        }
+        return false;
+    }
+
+    private Map<String, byte[]> buildMultipartByteMap(HttpServletRequest req) throws ServletException {
+        Map<String, byte[]> map = new java.util.HashMap<>();
+        try {
+            Collection<Part> parts = req.getParts();
+            for (Part p : parts) {
+                String name = p.getName();
+                InputStream is = p.getInputStream();
+                byte[] data = is.readAllBytes();
+                if (!map.containsKey(name)) {
+                    map.put(name, data);
+                } else {
+                    int idx = 1;
+                    String key;
+                    do {
+                        key = name + "_" + idx++;
+                    } while (map.containsKey(key));
+                    map.put(key, data);
+                }
+            }
+        } catch (Exception e) {
+            throw new ServletException("Erreur lors de la lecture des parties multipart: " + e.getMessage(), e);
+        }
+        return map;
     }
 
     private boolean hasComplexParams(HttpServletRequest request) {
