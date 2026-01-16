@@ -6,6 +6,7 @@ import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 import java.io.IOException;
 import java.util.List;
 import java.util.ArrayList;
@@ -16,6 +17,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import mg.framework.annotations.RequestParam;
+import mg.framework.annotations.SessionAttribute;
 import mg.framework.annotations.Json;
 import mg.framework.model.ModelView;
 import mg.framework.model.JsonResponse;
@@ -201,7 +203,12 @@ public class FrontServlet extends HttpServlet {
                                 }
                             }
                         }
+                        
+                        bindSessionParams(params, args, request);
+                        
                         Object result = h.getMethod().invoke(controllerInstance, args);
+                        
+                        applySessionChanges(request, result);
 
                         if (h.getMethod().isAnnotationPresent(Json.class)) {
                             response.setContentType("application/json");
@@ -837,6 +844,9 @@ public class FrontServlet extends HttpServlet {
     }
 
     private boolean isMapStringObject(java.lang.reflect.Parameter parameter) {
+        if (parameter.isAnnotationPresent(SessionAttribute.class)) {
+            return false;
+        }
         Type type = parameter.getParameterizedType();
         if (type instanceof ParameterizedType) {
             ParameterizedType pt = (ParameterizedType) type;
@@ -938,5 +948,72 @@ public class FrontServlet extends HttpServlet {
             }
         }
         return false;
+    }
+
+    private boolean isSessionAttributeParam(java.lang.reflect.Parameter param) {
+        if (!param.isAnnotationPresent(SessionAttribute.class)) {
+            return false;
+        }
+        Type type = param.getParameterizedType();
+        if (type instanceof ParameterizedType) {
+            ParameterizedType pt = (ParameterizedType) type;
+            if (pt.getRawType().equals(Map.class)) {
+                Type[] args = pt.getActualTypeArguments();
+                return args.length == 2 && args[0].equals(String.class) && args[1].equals(Object.class);
+            }
+        }
+        return false;
+    }
+
+ 
+    private Map<String, Object> buildSessionMap(HttpServletRequest request) {
+        Map<String, Object> sessionMap = new java.util.HashMap<>();
+        HttpSession httpSession = request.getSession(false);
+        if (httpSession != null) {
+            java.util.Enumeration<String> names = httpSession.getAttributeNames();
+            while (names.hasMoreElements()) {
+                String name = names.nextElement();
+                sessionMap.put(name, httpSession.getAttribute(name));
+            }
+        }
+        return sessionMap;
+    }
+   
+    private void bindSessionParams(java.lang.reflect.Parameter[] params, Object[] args, HttpServletRequest request) {
+        Map<String, Object> sessionMap = null;
+        for (int i = 0; i < params.length; i++) {
+            if (args[i] != null) continue;
+            
+            if (isSessionAttributeParam(params[i])) {
+                if (sessionMap == null) {
+                    sessionMap = buildSessionMap(request);
+                }
+                args[i] = sessionMap;
+            }
+        }
+    }
+   
+    private void applySessionChanges(HttpServletRequest request, Object result) {
+        if (!(result instanceof ModelView)) {
+            return;
+        }
+        ModelView mv = (ModelView) result;
+        if (mv.isInvalidateSession()) {
+            HttpSession httpSession = request.getSession(false);
+            if (httpSession != null) {
+                try {
+                    httpSession.invalidate();
+                } catch (Exception e) {
+                }
+            }
+            return;
+        }
+        HttpSession httpSession = request.getSession(true);
+        for (String key : mv.getSessionAttributesToRemove()) {
+            httpSession.removeAttribute(key);
+        }
+        for (Map.Entry<String, Object> entry : mv.getSessionAttributes().entrySet()) {
+            httpSession.setAttribute(entry.getKey(), entry.getValue());
+        }
     }
 }
