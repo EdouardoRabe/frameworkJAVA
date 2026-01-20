@@ -21,6 +21,9 @@ import mg.framework.annotations.SessionAttribute;
 import mg.framework.annotations.Json;
 import mg.framework.model.ModelView;
 import mg.framework.model.JsonResponse;
+import mg.framework.security.SecurityChecker;
+import mg.framework.security.SecurityConfig;
+import mg.framework.security.SecurityResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.annotation.MultipartConfig;
 import java.util.Collection;
@@ -70,6 +73,19 @@ public class FrontServlet extends HttpServlet {
             if (handlers != null && !handlers.isEmpty()) {
                 for (mg.framework.registry.HandlerMethod h : handlers) {
                     try {
+                        SecurityResult securityResult = SecurityChecker.checkSecurity(h.getMethod(), request);
+                        
+                        if (!securityResult.isAllowed()) {
+                            HttpSession secSession = request.getSession(true);
+                            if (securityResult.isUnauthorized()) {
+                                secSession.setAttribute("__fw_redirect_after_login", resourcePath);
+                            }
+                            String redirectUrl = securityResult.getRedirectUrl();
+                            String errorParam = securityResult.isUnauthorized() ? "?error=unauthorized" : "?error=forbidden";
+                            response.sendRedirect(request.getContextPath() + redirectUrl + errorParam);
+                            return;
+                        }
+                        
                         Object controllerInstance = h.getControllerClass().getDeclaredConstructor().newInstance();
                         String handlerPath = h.getPath();
                         Object[] args = new Object[0];
@@ -236,6 +252,38 @@ public class FrontServlet extends HttpServlet {
                             response.getWriter().println((String) result);
                         } else if (result instanceof ModelView) {
                             ModelView mv = (ModelView) result;
+                            
+                            if (mv.isLoginSuccess()) {
+                                HttpSession httpSession = request.getSession(false);
+                                String redirectUrl = mv.getDefaultRedirectAfterLogin();
+                                
+                                if (httpSession != null) {
+                                    String savedRedirect = (String) httpSession.getAttribute("__fw_redirect_after_login");
+                                    if (savedRedirect != null && !savedRedirect.isEmpty()) {
+                                        String loginPath = SecurityConfig.getInstance().getLoginUrl();
+                                        if (!savedRedirect.equals(loginPath)) {
+                                            redirectUrl = savedRedirect;
+                                        }
+                                        httpSession.removeAttribute("__fw_redirect_after_login");
+                                    }
+                                }
+                                
+                                if (!redirectUrl.startsWith("http://") && !redirectUrl.startsWith("https://")) {
+                                    redirectUrl = request.getContextPath() + redirectUrl;
+                                }
+                                response.sendRedirect(redirectUrl);
+                                return;
+                            }
+                            
+                            if (mv.isRedirect()) {
+                                String redirectUrl = mv.getRedirectUrl();
+                                if (!redirectUrl.startsWith("http://") && !redirectUrl.startsWith("https://")) {
+                                    redirectUrl = request.getContextPath() + redirectUrl;
+                                }
+                                response.sendRedirect(redirectUrl);
+                                return;
+                            }
+                            
                             RequestDispatcher dispatcher = getServletContext().getRequestDispatcher("/" + mv.getView());
                             if (dispatcher != null) {
                                 for (java.util.Map.Entry<String, Object> entry : mv.getAttributes().entrySet()) {

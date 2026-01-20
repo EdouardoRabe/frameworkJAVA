@@ -9,4 +9,10 @@ import java.lang.annotation.Target;
 @Target(ElementType.PARAMETER)
 public @interface RequestParam {
     String value() default "";
+    
+    /**
+     * Indique si le paramètre est requis.
+     * Si false et que le paramètre n'est pas fourni, null sera injecté.
+     */
+    boolean required() default true;
 }
