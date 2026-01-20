@@ -11,12 +11,55 @@ public class ModelView {
     private HashMap<String, Object> sessionAttributes = new HashMap<>();
     private Set<String> sessionAttributesToRemove = new HashSet<>();
     private boolean invalidateSession = false;
+    private boolean redirect = false;
+    private String redirectUrl = null;
+    private boolean loginSuccess = false;
+    private String defaultRedirectAfterLogin = null;
 
     public ModelView() {
     }
 
     public ModelView(String view) {
         this.view = view;
+    }
+ 
+    public static ModelView redirect(String url) {
+        ModelView mv = new ModelView();
+        mv.redirect = true;
+        mv.redirectUrl = url;
+        return mv;
+    }
+    
+    public boolean isRedirect() {
+        return redirect;
+    }
+    
+    public String getRedirectUrl() {
+        return redirectUrl;
+    }
+    
+    public void setRedirect(boolean redirect) {
+        this.redirect = redirect;
+    }
+    
+    public void setRedirectUrl(String redirectUrl) {
+        this.redirectUrl = redirectUrl;
+        this.redirect = true;
+    }
+ 
+    public static ModelView loginSuccess(String defaultRedirect) {
+        ModelView mv = new ModelView();
+        mv.loginSuccess = true;
+        mv.defaultRedirectAfterLogin = defaultRedirect;
+        return mv;
+    }
+
+    public boolean isLoginSuccess() {
+        return loginSuccess;
+    }
+
+    public String getDefaultRedirectAfterLogin() {
+        return defaultRedirectAfterLogin;
     }
 
     public String getView() {
