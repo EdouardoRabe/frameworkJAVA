@@ -9,4 +9,7 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)
 public @interface Authorized {
+    String fallback() default "";
+    
+    String messageKey() default "";
 }

@@ -17,9 +17,10 @@ public class SecurityChecker {
         SecurityConfig config = SecurityConfig.getInstance();
         HttpSession session = request.getSession(false);
         
-        boolean hasAuthorized = method.isAnnotationPresent(Authorized.class);
+        Authorized authorizedAnnotation = method.getAnnotation(Authorized.class);
         Role roleAnnotation = method.getAnnotation(Role.class);
         
+        boolean hasAuthorized = authorizedAnnotation != null;
         boolean requiresAuth = hasAuthorized || roleAnnotation != null;
         
         if (requiresAuth) {
@@ -29,10 +30,32 @@ public class SecurityChecker {
             }
             
             if (user == null) {
-                return SecurityResult.unauthorized(
-                    config.getLoginUrl(),
-                    "Authentification requise pour accéder à cette ressource"
-                );
+                String fallbackUrl = config.getLoginUrl();
+                String message = "Authentification requise pour accéder à cette ressource";
+                
+                if (hasAuthorized) {
+                    String annotationFallback = authorizedAnnotation.fallback();
+                    String annotationMessageKey = authorizedAnnotation.messageKey();
+                    
+                    if (annotationFallback != null && !annotationFallback.isEmpty()) {
+                        fallbackUrl = annotationFallback;
+                    }
+                    if (annotationMessageKey != null && !annotationMessageKey.isEmpty()) {
+                        message = annotationMessageKey;
+                    }
+                } else if (roleAnnotation != null) {
+                    String annotationFallback = roleAnnotation.fallback();
+                    String annotationMessageKey = roleAnnotation.messageKey();
+                    
+                    if (annotationFallback != null && !annotationFallback.isEmpty()) {
+                        fallbackUrl = annotationFallback;
+                    }
+                    if (annotationMessageKey != null && !annotationMessageKey.isEmpty()) {
+                        message = annotationMessageKey;
+                    }
+                }
+                
+                return SecurityResult.unauthorized(fallbackUrl, message);
             }
             
             if (roleAnnotation != null) {
@@ -40,11 +63,21 @@ public class SecurityChecker {
                 Set<String> userRoles = getUserRoles(session, config.getRoleSessionName());
                 
                 if (!hasAnyRole(userRoles, requiredRoles)) {
-                    return SecurityResult.forbidden(
-                        config.getForbiddenUrl(),
-                        "Accès refusé. Rôles requis: " + Arrays.toString(requiredRoles),
-                        requiredRoles
-                    );
+                    // Déterminer l'URL de fallback pour forbidden (priorité: annotation > config globale)
+                    String fallbackUrl = config.getForbiddenUrl();
+                    String message = "Accès refusé. Rôles requis: " + Arrays.toString(requiredRoles);
+                    
+                    String annotationFallback = roleAnnotation.fallback();
+                    String annotationMessageKey = roleAnnotation.messageKey();
+                    
+                    if (annotationFallback != null && !annotationFallback.isEmpty()) {
+                        fallbackUrl = annotationFallback;
+                    }
+                    if (annotationMessageKey != null && !annotationMessageKey.isEmpty()) {
+                        message = annotationMessageKey;
+                    }
+                    
+                    return SecurityResult.forbidden(fallbackUrl, message, requiredRoles);
                 }
             }
         }
@@ -67,7 +100,6 @@ public class SecurityChecker {
             return roles;
         }
         
-        // Support différents types de stockage des rôles
         if (rolesObj instanceof String[]) {
             roles.addAll(Arrays.asList((String[]) rolesObj));
         } else if (rolesObj instanceof Collection) {
@@ -77,9 +109,7 @@ public class SecurityChecker {
                 }
             }
         } else if (rolesObj instanceof String) {
-            // Support d'un seul rôle comme String
             String roleStr = (String) rolesObj;
-            // Support "admin,manager" format
             if (roleStr.contains(",")) {
                 for (String r : roleStr.split(",")) {
                     roles.add(r.trim());
